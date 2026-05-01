@@ -1,140 +1,154 @@
-# Dino DQN (Pygame) 🦖🤖
+# Dino Trainer
 
-A minimal **Chrome Dino–style runner** built in **Pygame**, trained with a **Deep Q-Network (DQN)** agent in **PyTorch**.
+This is my Chrome-Dino reinforcement learning project. I built a small Pygame version of the Dino game and trained a neural network to choose between:
 
-The agent observes a small state vector (dino height + obstacle distance) and learns when to **jump** to avoid obstacles.
+- run
+- jump
+- duck
 
----
+The main thing I wanted to learn was how a DQN-style agent is put together outside of a tutorial: the game loop, the state representation, replay memory, target networks, checkpoints, and evaluation.
 
-## What’s inside
+## What Is In The Project
 
-- **`dino_game.py`** — Pygame runner environment (dino + obstacles + score)
-- **`dino_ai.py`** — DQN model + replay buffer + epsilon-greedy policy + target network
-- **`train.py`** — training loop (renders the game while training) and saves weights to `dino_ai.pth`
-
----
-
-## How the game works
-
-**Game window:** `600 x 200`  
-**Dino:** rectangle at `(x=50, y=130)` with size `30 x 60`  
-**Obstacles:** red rectangles `20 x 20`, move left by `5 px/frame`
-
-### Actions
-- `0` → do nothing  
-- `1` → jump (only if currently on the ground)
-
-### State (input to the network)
-A 3D vector:
-
-```
-[dino_y, obstacle_distance, obstacle_height]
+```text
+dino_game.py   # the Pygame environment
+dino_ai.py     # the neural network agent
+train.py       # training, evaluation, checkpoints, and demos
 ```
 
-- If an obstacle exists: `obstacle_distance = obstacles[0].x - dino.x`, `obstacle_height = 20`
-- If none: `[dino_y, 999, 0]`
+The project uses:
 
-### Rewards
-- `+1` each step you survive
-- `-1` on collision (episode ends)
-
----
-
-## How the AI works (DQN)
-
-**Network:** `3 → 24 → 24 → 2` (ReLU activations)
-
-Key training pieces:
-- **Replay buffer:** up to `5000` transitions
-- **Epsilon-greedy:** starts at `1.0`, decays by `0.99` each replay step, min `0.05`
-- **Discount factor (gamma):** `0.95`
-- **Target network:** synced periodically for stability (`UPDATE_TARGET_EVERY = 10` episodes)
-
-Trained weights are saved to:
-
-```
-dino_ai.pth
-```
-
----
+- a Gym-like `reset()` / `step()` game API
+- a 9-value state vector instead of raw pixels
+- DQN with replay memory
+- a target network
+- Double DQN target calculation
+- epsilon-greedy exploration
+- curriculum learning
+- expert demonstrations for a warm start
+- CSV metrics for training and evaluation runs
 
 ## Setup
 
-### Requirements
-- Python 3.8+ recommended
-- `pygame`
-- `torch`
-- `numpy`
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-Install dependencies:
+## Training
+
+Basic training:
 
 ```bash
-pip install pygame torch numpy
+python train.py --episodes 500
 ```
 
----
-
-## Train the agent
-
-Run:
+Training with the game window open:
 
 ```bash
-python train.py
+python train.py --episodes 500 --render
 ```
 
-Notes:
-- Training **opens a Pygame window** and renders gameplay while learning.
-- Close the window to stop training early.
-- After training finishes, weights are saved as `dino_ai.pth`.
+The stronger training setup uses a short imitation-learning phase first. The expert policy gives examples of when to jump and duck, then the DQN can keep training from that better starting point.
 
-You’ll see logs like:
-
-```
-Episode: 12, Score: 4, Epsilon: 0.73
+```bash
+python train.py --episodes 3000 --imitation-episodes 80 --imitation-epochs 10 --expert-warmup 40
 ```
 
----
+Training creates:
 
-## Loading a trained model (quick snippet)
+- `checkpoints/dino_dqn.pt`
+- `checkpoints/dino_dqn_best.pt`
+- `runs/<timestamp>/training_metrics.csv`
+- `runs/<timestamp>/eval_metrics.csv`
 
-There isn’t a dedicated “play with trained model” script in this repo, but you can do it with something like:
+The `.pt` files are PyTorch checkpoints. They store the model weights and training state so I can demo or evaluate the agent without retraining every time.
 
-```python
-import torch
-from dino_game import DinoGame
-from dino_ai import DinoAI
+## Demo
 
-game = DinoGame()
-ai = DinoAI()
-ai.model.load_state_dict(torch.load("dino_ai.pth", map_location="cpu"))
-ai.epsilon = 0.0  # greedy
-
-state = game.get_state()
-while game.running:
-    game.render()
-    action = ai.act(state)
-    reward = game.update(action)
-    state = game.get_state()
-    if reward == -1:
-        break
-
-print("Final score:", game.score)
+```bash
+python train.py --demo
 ```
 
----
+There are three policies I can run:
 
-## Tweaking / Ideas to improve learning
+```bash
+python train.py --demo --policy agent
+python train.py --demo --policy expert
+python train.py --demo --policy hybrid
+```
 
-If you want to push performance further:
-- Add more state info (e.g., obstacle width, speed, multiple obstacles)
-- Use frame stacking or normalized inputs
-- Reward shaping (e.g., score-based reward)
-- Increase network size and/or train longer
-- Add a “no render” mode for faster training (render only occasionally)
+`agent` is the neural network. `expert` is the hand-written teacher policy. `hybrid` uses the network most of the time but has a safety override near obstacles.
 
----
+## Evaluation
 
-## Troubleshooting
+This runs games without exploration and prints the scores:
 
-- **Window freezes / not responding:** this project handles `pygame.QUIT` events inside `render()`. Keep `render()` inside the loop (as in `train.py`).
-- **Slow training:** rendering is the bottleneck. Consider disabling rendering during most episodes.
+```bash
+python train.py --evaluate --policy agent --eval-episodes 5 --max-frames 12000
+```
+
+`--max-frames` is just a cap so evaluation does not run forever if the agent survives for a long time. It is not the score.
+
+Latest local result:
+
+```text
+Policy=agent
+Evaluation avg_score=133.00 best_score=142 episodes=5
+```
+
+## State Vector
+
+The model does not see the screen pixels. It gets these values:
+
+1. dino y-position
+2. dino vertical velocity
+3. whether the dino is ducking
+4. distance to the next obstacle
+5. obstacle y-position
+6. obstacle width
+7. obstacle height
+8. current obstacle speed
+9. whether the obstacle is a bird
+
+I normalized these values before giving them to the network. That made training much easier than using raw pixel numbers.
+
+## How The DQN Update Works
+
+The basic target is:
+
+```text
+target = reward + gamma * future_value
+```
+
+For Double DQN, the online network chooses the next action and the target network estimates the value of that action:
+
+```text
+next_action = argmax(Q_online(next_state))
+target = reward + gamma * Q_target(next_state, next_action)
+```
+
+The target network is copied from the online network every few training steps. That keeps the target from moving around too much while the model is learning.
+
+## Notes For My Demo Video
+
+The short version I want to explain:
+
+- I built the Dino game as a small RL environment.
+- The agent gets normalized game-state features.
+- The network predicts Q-values for run, jump, and duck.
+- Replay memory lets it learn from mixed past experiences.
+- A target network makes DQN training more stable.
+- Double DQN helps reduce overestimated Q-values.
+- I used curriculum learning so the agent sees simpler obstacles first.
+- I added expert demonstrations because learning duck timing from scratch was unstable.
+- The final agent is evaluated with exploration turned off.
+
+## Things I Would Improve Next
+
+- train longer from the imitation checkpoint
+- add plots for score over time
+- compare pure DQN vs imitation warm start
+- try a CNN version that learns from pixels
+- package the demo as a small web or Chrome extension version
