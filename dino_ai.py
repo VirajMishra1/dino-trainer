@@ -91,7 +91,7 @@ class DinoAI:
     def remember(self, state: List[float], action: int, reward: float, next_state: List[float], done: bool) -> None:
         self.memory.append(Transition(state, action, reward, next_state, done))
 
-    def replay(self) -> float | None:
+    def replay(self, decay_epsilon: bool = True) -> float | None:
         if len(self.memory) < self.config.batch_size:
             return None
 
@@ -105,8 +105,6 @@ class DinoAI:
         predicted_q = self.model(states).gather(1, actions).squeeze(1)
 
         with torch.no_grad():
-            # Double DQN: use the main net to pick the action, but the target
-            # net to score it. This helped reduce jumpy Q-value estimates.
             next_actions = self.model(next_states).argmax(dim=1, keepdim=True)
             next_q = self.target_model(next_states).gather(1, next_actions).squeeze(1)
             target_q = rewards + (1.0 - dones) * self.config.gamma * next_q
@@ -118,7 +116,8 @@ class DinoAI:
         self.optimizer.step()
 
         self.training_steps += 1
-        self.epsilon = max(self.config.epsilon_min, self.epsilon * self.config.epsilon_decay)
+        if decay_epsilon:
+            self.epsilon = max(self.config.epsilon_min, self.epsilon * self.config.epsilon_decay)
         return float(loss.item())
 
     def imitate(
@@ -141,7 +140,7 @@ class DinoAI:
         actions = torch.tensor([action for _, action in samples], dtype=torch.long, device=self.device)
 
         counts = torch.bincount(actions, minlength=self.config.action_size).float()
-        class_weights = counts.sum() / counts.clamp_min(1.0)
+        class_weights = 1.0 / counts.clamp_min(1.0)
         class_weights = class_weights / class_weights.mean()
 
         last_loss = 0.0
@@ -177,7 +176,7 @@ class DinoAI:
         torch.save(checkpoint, path)
 
     def load(self, path: str | Path) -> None:
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
         model_state = checkpoint["model"] if "model" in checkpoint else checkpoint
         self.model.load_state_dict(model_state)
         self.target_model.load_state_dict(checkpoint.get("target_model", model_state))

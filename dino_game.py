@@ -107,14 +107,11 @@ class DinoGame:
         self.running = True
         return self.get_state()
 
-    def set_curriculum_stage(self, episode: int, total_episodes: int) -> str:
-        progress = episode / max(1, total_episodes)
-        if progress < 0.55:
-            self.curriculum_stage = "cacti"
-        elif progress < 0.88:
-            self.curriculum_stage = "high_birds"
-        else:
+    def set_curriculum_stage(self, avg_score: float) -> str:
+        if avg_score >= 30 or self.curriculum_stage == "full":
             self.curriculum_stage = "full"
+        elif avg_score >= 15 or self.curriculum_stage == "high_birds":
+            self.curriculum_stage = "high_birds"
         return self.curriculum_stage
 
     def set_full_curriculum(self) -> None:
@@ -143,7 +140,7 @@ class DinoGame:
         if collided:
             return self.get_state(), -10.0, True, self._info()
 
-        reward += 0.05
+        reward += 0.01
         return self.get_state(), reward, False, self._info()
 
     def get_state(self) -> List[float]:

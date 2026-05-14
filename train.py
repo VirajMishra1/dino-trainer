@@ -107,18 +107,20 @@ def run_episode(
             if not env.running:
                 break
 
+        agent_chose = False
         if not train and policy != "agent":
             action = policy_action(env, agent, state, policy)
         elif train and advisor_probability > 0 and random.random() < advisor_probability:
             action = expert_action(env)
         else:
             action = agent.act(state, explore=train)
+            agent_chose = True
         next_state, reward, done, info = env.step(action)
 
         if train:
             agent.remember(state, action, reward, next_state, done)
             if info["frames_alive"] % train_every == 0:
-                last_loss = agent.replay()
+                last_loss = agent.replay(decay_epsilon=agent_chose)
                 if agent.training_steps > 0 and agent.training_steps % target_update == 0:
                     agent.update_target()
 
@@ -230,7 +232,8 @@ def warm_start_replay(agent: DinoAI, episodes: int, seed: int, max_frames: int) 
                     break
 
         for _ in range(min(500, max(0, len(agent.memory) - agent.config.batch_size))):
-            agent.replay()
+            agent.replay(decay_epsilon=False)
+        agent.update_target()
     finally:
         env.close()
 
@@ -303,12 +306,13 @@ def train(args: argparse.Namespace) -> None:
         print(f"imitation samples={len(demonstrations)} epochs={args.imitation_epochs} loss={imitation_loss:.5f}")
     warm_start_replay(agent, args.expert_warmup, args.seed + 123_000, args.max_frames)
     recent_scores: deque[int] = deque(maxlen=25)
+    avg_score = 0.0
     best_eval_score = float("-inf")
     best_episode = 0
 
     try:
         for episode in range(1, args.episodes + 1):
-            stage = "full" if args.no_curriculum else env.set_curriculum_stage(episode, args.episodes)
+            stage = "full" if args.no_curriculum else env.set_curriculum_stage(avg_score)
             advisor_probability = args.advisor_start * max(0.0, 1.0 - episode / max(1, args.advisor_until))
             score, reward, frames, loss = run_episode(
                 env=env,
@@ -353,7 +357,7 @@ def train(args: argparse.Namespace) -> None:
                 eval_avg, eval_best = evaluate_policy(
                     agent=agent,
                     episodes=args.eval_episodes,
-                    seed=args.seed + 10_000 + episode,
+                    seed=args.seed + 10_000,
                     max_frames=args.max_frames,
                 )
                 saved_best = episode >= args.best_min_episodes and eval_avg > best_eval_score

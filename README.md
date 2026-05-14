@@ -11,9 +11,10 @@ The main thing I wanted to learn was how a DQN-style agent is put together outsi
 ## What Is In The Project
 
 ```text
-dino_game.py   # the Pygame environment
-dino_ai.py     # the neural network agent
-train.py       # training, evaluation, checkpoints, and demos
+dino_game.py       # the Pygame environment
+dino_ai.py         # the neural network agent
+train.py           # training, evaluation, checkpoints, and demos
+plot_training.py   # training curve visualization
 ```
 
 The project uses:
@@ -24,9 +25,13 @@ The project uses:
 - a target network
 - Double DQN target calculation
 - epsilon-greedy exploration
-- curriculum learning
-- expert demonstrations for a warm start
+- score-based curriculum learning (cacti → birds → full)
+- expert demonstrations for a warm start (behavior cloning)
 - CSV metrics for training and evaluation runs
+
+## Training Curves
+
+![Training Curves](training_curves.png)
 
 ## Setup
 
@@ -53,7 +58,7 @@ python train.py --episodes 500 --render
 The stronger training setup uses a short imitation-learning phase first. The expert policy gives examples of when to jump and duck, then the DQN can keep training from that better starting point.
 
 ```bash
-python train.py --episodes 3000 --imitation-episodes 80 --imitation-epochs 10 --expert-warmup 40
+python train.py --episodes 1500 --imitation-episodes 80 --imitation-epochs 10 --expert-warmup 40
 ```
 
 Training creates:
@@ -64,6 +69,16 @@ Training creates:
 - `runs/<timestamp>/eval_metrics.csv`
 
 The `.pt` files are PyTorch checkpoints. They store the model weights and training state so I can demo or evaluate the agent without retraining every time.
+
+## Plotting
+
+After a training run, plot the curves:
+
+```bash
+python plot_training.py runs/<timestamp> --save
+```
+
+This generates a 4-panel chart: score over training, exploration rates, training loss, and evaluation scores.
 
 ## Demo
 
@@ -95,7 +110,7 @@ Latest local result:
 
 ```text
 Policy=agent
-Evaluation avg_score=133.00 best_score=142 episodes=5
+Evaluation avg_score=167.95 best_score=189 episodes=20
 ```
 
 ## State Vector
@@ -131,24 +146,17 @@ target = reward + gamma * Q_target(next_state, next_action)
 
 The target network is copied from the online network every few training steps. That keeps the target from moving around too much while the model is learning.
 
-## Notes For My Demo Video
+## What I Learned
 
-The short version I want to explain:
-
-- I built the Dino game as a small RL environment.
-- The agent gets normalized game-state features.
-- The network predicts Q-values for run, jump, and duck.
-- Replay memory lets it learn from mixed past experiences.
-- A target network makes DQN training more stable.
-- Double DQN helps reduce overestimated Q-values.
-- I used curriculum learning so the agent sees simpler obstacles first.
-- I added expert demonstrations because learning duck timing from scratch was unstable.
-- The final agent is evaluated with exploration turned off.
+- **Reward shaping matters a lot.** My survival reward was too high relative to action rewards, which made the agent prefer sitting still. Scaling it down fixed that.
+- **Imitation learning class weights need to be inverted.** Minority actions (jump, duck) need higher weight, not majority (stay). Getting this wrong silently undermines the whole warmstart.
+- **Curriculum learning needs hysteresis.** If you advance stages based on score, you need to prevent the agent from dropping back to easier stages when scores temporarily dip.
+- **Epsilon should only decay on agent-chosen actions.** If an expert advisor picks the action, the agent didn't actually explore, so epsilon shouldn't tick down.
+- **Fixed eval seeds give cleaner learning curves.** Changing the seed every eval cycle adds noise that makes it hard to tell if the agent is actually improving.
 
 ## Things I Would Improve Next
 
-- train longer from the imitation checkpoint
-- add plots for score over time
-- compare pure DQN vs imitation warm start
 - try a CNN version that learns from pixels
+- compare pure DQN vs imitation warm start
 - package the demo as a small web or Chrome extension version
+- add prioritized experience replay
